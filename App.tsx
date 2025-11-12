@@ -5,20 +5,27 @@ import HostManagement from './pages/HostManagement';
 import SalesReport from './pages/SalesReport';
 import TargetSetting from './pages/TargetSetting';
 import Dashboard from './pages/Dashboard';
+import { LockProvider } from './contexts/LockContext';
+import ProtectedPage from './components/ProtectedPage';
+import { AppProvider } from './contexts/AppContext';
 
 function App() {
   return (
-    <div className="min-h-screen bg-gray-900 text-gray-100 font-sans">
-      <Header />
-      <main className="p-4 sm:p-6 lg:p-8 container mx-auto">
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/hosts" element={<HostManagement />} />
-          <Route path="/targets" element={<TargetSetting />} />
-          <Route path="/sales" element={<SalesReport />} />
-        </Routes>
-      </main>
-    </div>
+    <AppProvider>
+      <LockProvider>
+        <div className="min-h-screen bg-gray-900 text-gray-100 font-sans">
+          <Header />
+          <main className="p-4 sm:p-6 lg:p-8 container mx-auto">
+            <Routes>
+              <Route path="/" element={<ProtectedPage><Dashboard /></ProtectedPage>} />
+              <Route path="/hosts" element={<ProtectedPage><HostManagement /></ProtectedPage>} />
+              <Route path="/targets" element={<ProtectedPage><TargetSetting /></ProtectedPage>} />
+              <Route path="/sales" element={<SalesReport />} />
+            </Routes>
+          </main>
+        </div>
+      </LockProvider>
+    </AppProvider>
   );
 }
 

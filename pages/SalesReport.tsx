@@ -1,14 +1,15 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { SaleRecord, Host, MonthlyTarget } from '../types';
-import useLocalStorage from '../hooks/useLocalStorage';
+import { SaleRecord, Host } from '../types';
 import Card from '../components/Card';
+import ExportButtons from '../components/ExportButtons';
+import { exportToExcel, exportToPdf } from '../utils/exportUtils';
+import { useAppContext } from '../contexts/AppContext';
 
 const DollarSignIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 mr-2"><line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>;
 
 const SalesReport: React.FC = () => {
-  const [hosts] = useLocalStorage<Host[]>('hosts', []);
-  const [sales, setSales] = useLocalStorage<SaleRecord[]>('sales', []);
-  const [monthlyTargets] = useLocalStorage<MonthlyTarget[]>('monthlyTargets', []);
+  const { state, setState } = useAppContext();
+  const { hosts, sales } = state;
 
   const [hostId, setHostId] = useState('');
   const [accountName, setAccountName] = useState('');
@@ -20,24 +21,29 @@ const SalesReport: React.FC = () => {
   const [error, setError] = useState('');
   
   const [hostAccounts, setHostAccounts] = useState<string[]>([]);
+  
+  const today = new Date();
+  const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+  const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
+  const [filterStartDate, setFilterStartDate] = useState(firstDayOfMonth);
+  const [filterEndDate, setFilterEndDate] = useState(lastDayOfMonth);
 
   useEffect(() => {
     if (hostId) {
       const selectedHost = hosts.find(h => h.id === hostId);
       setHostAccounts(selectedHost ? selectedHost.accounts : []);
-      setAccountName(''); // Reset account name when host changes
+      setAccountName('');
     } else {
       setHostAccounts([]);
     }
   }, [hostId, hosts]);
-
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(value);
   }
 
   const handleNumericChange = (setter: React.Dispatch<React.SetStateAction<string>>) => (e: React.ChangeEvent<HTMLInputElement>) => {
-      const rawValue = e.target.value.replace(/\D/g, ''); // Remove all non-digit characters
+      const rawValue = e.target.value.replace(/\D/g, '');
       setter(rawValue);
   };
 
@@ -45,7 +51,6 @@ const SalesReport: React.FC = () => {
       if (!value) return '';
       return new Intl.NumberFormat('id-ID').format(Number(value));
   };
-
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
@@ -65,9 +70,11 @@ const SalesReport: React.FC = () => {
       date,
     };
 
-    setSales(prevSales => [newSale, ...prevSales].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+    setState(prev => ({
+        ...prev,
+        sales: [newSale, ...prev.sales].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    }));
 
-    // Reset form
     setHostId('');
     setAccountName('');
     setInitialSales('');
@@ -75,34 +82,54 @@ const SalesReport: React.FC = () => {
     setSession('');
     setDuration('');
     setError('');
+  }, [hostId, accountName, initialSales, finalSales, session, duration, date, setState]);
 
-  }, [hostId, accountName, initialSales, finalSales, session, duration, date, setSales]);
-
-  const monthlyReport = useMemo(() => {
-    const today = new Date();
-    const currentMonth = today.getMonth();
-    const currentYear = today.getFullYear();
-
-    return hosts.map(host => {
-      const hostSales = sales.filter(sale => {
-        const saleDate = new Date(sale.date);
-        return sale.hostId === host.id && saleDate.getMonth() === currentMonth && saleDate.getFullYear() === currentYear;
+  const filteredSales = useMemo(() => {
+      return sales.filter(sale => {
+          if (!filterStartDate || !filterEndDate) return true;
+          const saleDate = new Date(sale.date);
+          saleDate.setHours(0,0,0,0);
+          const startDate = new Date(filterStartDate);
+          const endDate = new Date(filterEndDate);
+          return saleDate >= startDate && saleDate <= endDate;
       });
-      
-      const currentTarget = monthlyTargets.find(t => t.hostId === host.id && t.month === currentMonth && t.year === currentYear);
+  }, [sales, filterStartDate, filterEndDate]);
 
-      const totalOmset = hostSales.reduce((acc, sale) => acc + (sale.finalSales - sale.initialSales), 0);
-      const targetAmount = currentTarget?.target ?? 0;
-      const progress = targetAmount > 0 ? (totalOmset / targetAmount) * 100 : 0;
+  const handlePdfExport = () => {
+    const title = `Laporan Penjualan (${new Date(filterStartDate).toLocaleDateString('id-ID')} - ${new Date(filterEndDate).toLocaleDateString('id-ID')})`;
+    const headers = [['Tanggal', 'Host', 'Akun', 'Sesi', 'Omset Sesi']];
+    const data = filteredSales.map(sale => {
+        const host = hosts.find(h => h.id === sale.hostId);
+        const sessionOmset = sale.finalSales - sale.initialSales;
+        return [
+            new Date(sale.date).toLocaleDateString('id-ID'),
+            host?.name || 'N/A',
+            sale.accountName,
+            sale.session,
+            formatCurrency(sessionOmset)
+        ];
+    });
+    exportToPdf(title, headers, data, 'laporan-penjualan');
+  };
 
-      return {
-        ...host,
-        totalOmset,
-        monthlyTarget: targetAmount,
-        progress: Math.min(progress, 100)
-      };
-    }).filter(report => report.monthlyTarget > 0); // Only show hosts with a set target for the month
-  }, [hosts, sales, monthlyTargets]);
+  const handleExcelExport = () => {
+      const dataForExcel = filteredSales.map(sale => {
+          const host = hosts.find(h => h.id === sale.hostId);
+          const sessionOmset = sale.finalSales - sale.initialSales;
+          return {
+              'Tanggal': new Date(sale.date).toLocaleDateString('id-ID'),
+              'Host': host?.name || 'N/A',
+              'Akun': sale.accountName,
+              'Sesi': sale.session,
+              'Durasi': sale.duration,
+              'Omset Awal': sale.initialSales,
+              'Omset Akhir': sale.finalSales,
+              'Omset Sesi': sessionOmset,
+          };
+      });
+      exportToExcel(`laporan-penjualan-${filterStartDate}-sd-${filterEndDate}`, [{ sheetName: 'Penjualan', data: dataForExcel }]);
+  };
+
 
   return (
     <div className="space-y-8">
@@ -160,6 +187,36 @@ const SalesReport: React.FC = () => {
       </Card>
       
       <Card title="Riwayat Penjualan Terbaru">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4 mb-4 p-4 bg-gray-700/30 rounded-md border border-gray-700">
+            <div className="flex flex-col sm:flex-row gap-4">
+              <div className="flex-1">
+                  <label htmlFor="filterStartDate" className="block text-sm font-medium text-gray-300 mb-1">Dari Tanggal</label>
+                  <input 
+                      id="filterStartDate" 
+                      type="date" 
+                      value={filterStartDate} 
+                      onChange={e => setFilterStartDate(e.target.value)} 
+                      className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white focus:ring-2 focus:ring-blue-500"
+                  />
+              </div>
+              <div className="flex-1">
+                  <label htmlFor="filterEndDate" className="block text-sm font-medium text-gray-300 mb-1">Sampai Tanggal</label>
+                  <input 
+                      id="filterEndDate" 
+                      type="date" 
+                      value={filterEndDate} 
+                      onChange={e => setFilterEndDate(e.target.value)} 
+                      className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white focus:ring-2 focus:ring-blue-500"
+                  />
+              </div>
+            </div>
+            <ExportButtons
+              onPdfExport={handlePdfExport}
+              onExcelExport={handleExcelExport}
+              isDisabled={filteredSales.length === 0}
+            />
+        </div>
+
         <div className="overflow-x-auto max-h-96">
           <table className="w-full text-left">
             <thead className="bg-gray-700/50 sticky top-0">
@@ -172,7 +229,7 @@ const SalesReport: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {sales.length > 0 ? sales.slice(0, 20).map(sale => { // Show recent 20
+              {filteredSales.length > 0 ? filteredSales.map(sale => {
                   const host = hosts.find(h => h.id === sale.hostId);
                   const sessionOmset = sale.finalSales - sale.initialSales;
                   return (
@@ -186,7 +243,7 @@ const SalesReport: React.FC = () => {
                   )
               }) : (
                  <tr>
-                    <td colSpan={5} className="text-center p-4 text-gray-400">Belum ada data penjualan.</td>
+                    <td colSpan={5} className="text-center p-4 text-gray-400">Tidak ada data penjualan pada rentang tanggal yang dipilih.</td>
                  </tr>
               )}
             </tbody>

@@ -1,7 +1,9 @@
 import React, { useState, useCallback } from 'react';
 import { Host } from '../types';
-import useLocalStorage from '../hooks/useLocalStorage';
 import Card from '../components/Card';
+import ExportButtons from '../components/ExportButtons';
+import { exportToExcel, exportToPdf } from '../utils/exportUtils';
+import { useAppContext } from '../contexts/AppContext';
 
 // Icons
 const UserPlusIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 mr-2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/></svg>;
@@ -27,7 +29,9 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, children }) => {
 
 
 const HostManagement: React.FC = () => {
-  const [hosts, setHosts] = useLocalStorage<Host[]>('hosts', []);
+  const { state, setState } = useAppContext();
+  const { hosts } = state;
+
   const [name, setName] = useState('');
   const [accounts, setAccounts] = useState('');
   const [error, setError] = useState('');
@@ -49,15 +53,15 @@ const HostManagement: React.FC = () => {
       name,
       accounts: accounts.split(',').map(acc => acc.trim()).filter(Boolean),
     };
-    setHosts(prevHosts => [...prevHosts, newHost]);
+    setState(prev => ({...prev, hosts: [...prev.hosts, newHost]}));
     setName('');
     setAccounts('');
     setError('');
-  }, [name, accounts, setHosts]);
+  }, [name, accounts, setState]);
 
   const handleDeleteHost = useCallback((id: string) => {
-      setHosts(prevHosts => prevHosts.filter(host => host.id !== id));
-  }, [setHosts]);
+      setState(prev => ({...prev, hosts: prev.hosts.filter(host => host.id !== id)}));
+  }, [setState]);
 
   const openEditModal = (host: Host) => {
     setEditingHost(host);
@@ -69,13 +73,32 @@ const HostManagement: React.FC = () => {
   const handleEditHost = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingHost) return;
-    setHosts(prevHosts => prevHosts.map(h => 
+    
+    const updatedHosts = hosts.map(h => 
       h.id === editingHost.id 
       ? { ...h, name: editName, accounts: editAccounts.split(',').map(acc => acc.trim()).filter(Boolean) } 
       : h
-    ));
+    );
+
+    setState(prev => ({...prev, hosts: updatedHosts}));
+    
     setIsModalOpen(false);
     setEditingHost(null);
+  };
+
+  const handlePdfExport = () => {
+    const title = 'Daftar Host Aktif';
+    const headers = [['Nama Host', 'Akun yang Dipegang']];
+    const data = hosts.map(h => [h.name, h.accounts.join(', ')]);
+    exportToPdf(title, headers, data, 'daftar-host');
+  };
+
+  const handleExcelExport = () => {
+    const dataForExcel = hosts.map(h => ({
+      'Nama Host': h.name,
+      'Akun yang Dipegang': h.accounts.join(', ')
+    }));
+    exportToExcel('daftar-host', [{ sheetName: 'Host', data: dataForExcel }]);
   };
 
   return (
@@ -109,7 +132,15 @@ const HostManagement: React.FC = () => {
         </form>
       </Card>
 
-      <Card title="Daftar Host Aktif">
+      <Card>
+        <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-bold text-white">Daftar Host Aktif</h2>
+            <ExportButtons
+                onPdfExport={handlePdfExport}
+                onExcelExport={handleExcelExport}
+                isDisabled={hosts.length === 0}
+            />
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead className="bg-gray-700/50">
